@@ -27,7 +27,7 @@ import httpx
 
 from app.config import AGENT_AI_URL
 
-_TIMEOUT = httpx.Timeout(30.0)
+_TIMEOUT = httpx.Timeout(120)
 _PING_TIMEOUT = httpx.Timeout(10.0)
 
 # ping_llm() specifically waits on a real LLM round trip (agent -> Ollama),

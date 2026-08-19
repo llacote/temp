@@ -65,7 +65,7 @@ prompt = st.text_area(
 if st.button("Générer le plan", type="primary", disabled=not prompt.strip()):
     with st.spinner("Génération du plan…"):
         try:
-            response = requests.post(f"{BACKEND_URL}/plans", json={"prompt": prompt}, timeout=60)
+            response = requests.post(f"{BACKEND_URL}/plans", json={"prompt": prompt}, timeout=130)
             response.raise_for_status()
             st.session_state.plan = response.json()
         except Exception as exc:
