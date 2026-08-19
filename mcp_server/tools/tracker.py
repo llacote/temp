@@ -1,7 +1,9 @@
 import os
 from datetime import date
+from typing import Annotated
 
 import httpx
+from pydantic import Field
 
 from mcp_instance import mcp
 from domain_types import IssueRef
@@ -13,11 +15,29 @@ GITHUB_API_BASE = "https://api.github.com"
 
 @mcp.tool
 async def create_onboarding_issue(
-    employee_name: str,
-    start_date: date,
-    checklist: list[str],
+    employee_name: Annotated[
+        str,
+        Field(description="Nom complet du nouveau collaborateur (ex: 'Léa Martin')."),
+    ],
+    start_date: Annotated[
+        date,
+        Field(description="Date d'arrivée du collaborateur, au format ISO YYYY-MM-DD."),
+    ],
+    checklist: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Liste des tâches à accomplir avant ou pendant l'arrivée "
+                "(ex: ['Créer le compte', 'Préparer le poste de travail', "
+                "'Badge d'accès']). Au moins un élément."
+            )
+        ),
+    ],
 ) -> IssueRef:
-    """Crée un ticket/epic d'onboarding sur le tracker (GitHub Issues)."""
+    """Crée un ticket de suivi (issue GitHub) pour tracer l'ensemble des
+    tâches d'onboarding d'un nouveau collaborateur. À utiliser dès qu'un
+    plan d'onboarding est lancé, pour centraliser le suivi des tâches
+    associées dans le tracker de l'équipe. Retourne l'URL de l'issue créée."""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         raise RuntimeError(
             "GITHUB_TOKEN et GITHUB_REPO doivent être définis dans l'environnement "
