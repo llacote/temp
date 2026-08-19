@@ -15,8 +15,8 @@ Contrat consommé par backend/app/services/agent_client.py :
 
 import os
 import httpx
-from fastmcp import Client
 from datetime import date
+from fastmcp import Client
 
 OLLAMA_API_BASE = os.environ.get("OLLAMA_API_BASE", "http://ollama:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
@@ -29,10 +29,22 @@ _MCP_ENDPOINT = f"{MCP_SERVER_URL}/mcp"
 SYSTEM_PROMPT = (
     f"Nous sommes le {date.today().isoformat()}. "
     "Tu es un agent qui prépare l'arrivée de nouveaux collaborateurs. "
+    "Quand une date est relative (\"lundi prochain\", \"dans 2 semaines\"), "
+    "calcule la date exacte au format YYYY-MM-DD avant d'appeler un outil. "
     "À partir de l'intention de l'utilisateur, propose les actions pertinentes "
     "en appelant les outils disponibles. Tu ne dois JAMAIS exécuter d'action "
     "toi-même : tu proposes uniquement un plan, qui sera validé par un humain "
-    "avant toute exécution."
+    "avant toute exécution.\n\n"
+    "Distingue deux types de paramètres :\n"
+    "- Paramètres d'IDENTIFICATION (équipe, date d'arrivée, email, identifiant) : "
+    "ne les invente JAMAIS. S'ils ne sont pas donnés explicitement ou calculables "
+    "avec certitude, n'appelle pas l'outil concerné.\n"
+    "- Paramètres de CONTENU (checklist, titre d'événement, corps de message) : "
+    "tu peux proposer des valeurs raisonnables et utiles par défaut, l'humain "
+    "les validera de toute façon avant exécution.\n"
+    "Ne confonds pas les deux : refuser un outil entier à cause d'un paramètre "
+    "de contenu manquant est une erreur, seul un paramètre d'identification "
+    "manquant justifie de ne pas appeler l'outil."
 )
 
 # Résumés lisibles pour l'écran d'approbation. Légère duplication des noms
@@ -41,7 +53,7 @@ SYSTEM_PROMPT = (
 _SUMMARY_TEMPLATES = {
     "create_onboarding_issue": "Créer le ticket onboarding pour {employee_name}",
     "create_employee_record": "Créer la fiche employé pour {name} ({role})",
-    "send_welcome_message": "Envoyer un message d'accueil à {recipient}",
+    "send_welcome_message": "Envoyer un message d'accueil ({channel}) à l'équipe {team} pour {employee_name}",
     "generate_handbook": "Générer le document '{template}'",
     "create_calendar_event": "Créer l'événement '{title}'",
 }
@@ -49,12 +61,18 @@ _SUMMARY_TEMPLATES = {
 
 def _summarize(tool_name: str, params: dict) -> str:
     template = _SUMMARY_TEMPLATES.get(tool_name)
-    if not template:
-        return f"Exécuter {tool_name}"
-    try:
-        return template.format(**params)
-    except (KeyError, IndexError):
-        return f"Exécuter {tool_name}"
+    if template:
+        try:
+            return template.format(**params)
+        except (KeyError, IndexError):
+            pass
+    # Fallback si le template ne correspond plus aux vrais paramètres du
+    # tool (ex: signature modifiée par un⋅e coéquipier⋅ère) -- affiche les
+    # paramètres bruts plutôt qu'un nom de tool sec et peu lisible.
+    if params:
+        readable = ", ".join(f"{k}: {v}" for k, v in params.items())
+        return f"{tool_name} ({readable})"
+    return f"Exécuter {tool_name}"
 
 
 async def _discover_tools() -> list[dict]:
@@ -79,7 +97,7 @@ async def _discover_tools() -> list[dict]:
 async def build_plan(prompt: str) -> list[dict]:
     tools = await _discover_tools()
 
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with httpx.AsyncClient(timeout=110) as client:
         r = await client.post(
             f"{OLLAMA_API_BASE}/api/chat",
             json={
@@ -109,4 +127,12 @@ async def build_plan(prompt: str) -> list[dict]:
             "summary": _summarize(tool_name, params),
         })
 
-    return actions
+    clarification = None
+    if not actions:
+        # Le modèle a refusé de proposer une action plutôt que d'inventer
+        # un paramètre manquant (ex: équipe non précisée) -- on remonte
+        # son explication textuelle pour que l'utilisateur sache quoi
+        # préciser, plutôt qu'un silence de "0 actions" sans contexte.
+        clarification = data.get("message", {}).get("content") or None
+
+    return actions, clarification
